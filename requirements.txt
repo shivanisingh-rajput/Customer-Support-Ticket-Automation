@@ -1,3 +1,5 @@
 fastapi
 pydantic>=2,<3
 uvicorn
+groq
+python-dotenv

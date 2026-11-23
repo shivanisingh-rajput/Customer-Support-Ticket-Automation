@@ -9,7 +9,8 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, status
 from pydantic import BaseModel, StringConstraints
-
+from ai_classifier import classify_ticket_with_ai
+from routing import Category, Queue, queue_for_category
 
 app = FastAPI(title="Customer Support Ticket Automation")
 
@@ -58,7 +59,7 @@ initialize_database()
 
 @app.post("/tickets", status_code=status.HTTP_201_CREATED)
 def create_ticket(request: TicketRequest) -> TicketResponse:
-    category = classify_ticket(request.subject, request.message)
+    category = classify_ticket_with_ai(request.subject, request.message)
     queue = queue_for_category(category)
 
     ticket = TicketResponse(
