@@ -1,3 +1,4 @@
+from routing import Category, Queue, classify_ticket, queue_for_category
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -24,13 +25,16 @@ class TicketRequest(BaseModel):
 
 class TicketResponse(TicketRequest):
     id: UUID
-    status: Literal["received"]
+    status: Literal["received", "routed", "needs_review"]
+    category: Category | None = None
+    queue: Queue | None = None
 
 
 DB_PATH = Path(__file__).with_name("tickets.db")
 
 
 def initialize_database() -> None:
+    
     with closing(sqlite3.connect(DB_PATH)) as connection, connection:
         connection.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
@@ -40,6 +44,13 @@ def initialize_database() -> None:
                 status TEXT NOT NULL
             )
         """)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(tickets)")
+        }
+        if "category" not in columns:
+            connection.execute("ALTER TABLE tickets ADD COLUMN category TEXT")
+        if "queue" not in columns:
+            connection.execute("ALTER TABLE tickets ADD COLUMN queue TEXT")
 
 
 initialize_database()
@@ -47,24 +58,41 @@ initialize_database()
 
 @app.post("/tickets", status_code=status.HTTP_201_CREATED)
 def create_ticket(request: TicketRequest) -> TicketResponse:
+    category = classify_ticket(request.subject, request.message)
+    queue = queue_for_category(category)
+
     ticket = TicketResponse(
         id=uuid4(),
         subject=request.subject,
         message=request.message,
-        status="received",
+        status="needs_review" if queue == "manual_review" else "routed",
+        category=category,
+        queue=queue,
     )
+
     with closing(sqlite3.connect(DB_PATH)) as connection, connection:
         connection.execute(
-            "INSERT INTO tickets (id, subject, message, status) VALUES (?, ?, ?, ?)",
-            (str(ticket.id), ticket.subject, ticket.message, ticket.status),
+            """
+            INSERT INTO tickets (id, subject, message, status, category, queue)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(ticket.id),
+                ticket.subject,
+                ticket.message,
+                ticket.status,
+                ticket.category,
+                ticket.queue,
+            ),
         )
+
     return ticket
 @app.get("/tickets/{ticket_id}")
 def get_ticket(ticket_id: UUID) -> TicketResponse:
     with closing(sqlite3.connect(DB_PATH)) as connection:
         connection.row_factory = sqlite3.Row
         ticket = connection.execute(
-            "SELECT id, subject, message, status FROM tickets WHERE id = ?",
+            "SELECT id, subject, message, status, category, queue FROM tickets WHERE id = ?",
             (str(ticket_id),),
         ).fetchone()
 
